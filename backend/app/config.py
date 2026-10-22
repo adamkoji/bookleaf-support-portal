@@ -14,12 +14,12 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = "bookleaf-super-secret-jwt-key-2026"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    LLM_PROVIDER: str = "groq"
+    LLM_PROVIDER: str = "gemini"
     LLM_API_KEY: str = ""
-    LLM_MODEL: str = "llama-3.3-70b-versatile"
+    LLM_MODEL: str = "gemini-3.8-flash"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )

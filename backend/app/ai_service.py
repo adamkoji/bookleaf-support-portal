@@ -1,11 +1,16 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 from openai import OpenAI
+from google import genai
 
 from app.config import settings
 from app.models import User, Book
+
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 VALID_CATEGORIES = [
     "Royalty & Payments",
@@ -204,40 +209,43 @@ def estimate_tokens(text: str) -> int:
 def resolve_llm_config() -> tuple[str, str, str, Optional[str]]:
     """
     Resolves (provider, api_key, model, base_url) from settings and environment variables.
-    Supports groq, gemini, and openai.
+    Supports gemini (via google-genai SDK), groq, and openai.
     """
-    raw_provider = (settings.LLM_PROVIDER or os.getenv("LLM_PROVIDER", "groq")).strip().lower()
+    load_dotenv(BASE_DIR / ".env", override=True)
+
+    raw_provider = (os.getenv("LLM_PROVIDER") or settings.LLM_PROVIDER or "gemini").strip().lower()
     api_key = (
-        settings.LLM_API_KEY
-        or os.getenv("LLM_API_KEY")
-        or os.getenv("GROQ_API_KEY")
+        os.getenv("LLM_API_KEY")
         or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+        or os.getenv("GROQ_API_KEY")
         or os.getenv("OPENAI_API_KEY")
+        or settings.LLM_API_KEY
         or ""
     ).strip()
 
     # Auto-detect provider from key prefix if present
-    if api_key.startswith("gsk_"):
-        provider = "groq"
-    elif api_key.startswith("AIza"):
+    if api_key.startswith("AIza"):
         provider = "gemini"
+    elif api_key.startswith("gsk_"):
+        provider = "groq"
     elif api_key.startswith("sk-"):
         provider = "openai"
     else:
         provider = raw_provider
 
-    configured_model = (settings.LLM_MODEL or os.getenv("LLM_MODEL", "")).strip()
+    configured_model = (os.getenv("LLM_MODEL") or settings.LLM_MODEL or "").strip()
 
-    if provider == "groq":
-        base_url = "https://api.groq.com/openai/v1"
-        model = configured_model or "llama-3.3-70b-versatile"
-    elif provider == "gemini":
-        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    if provider == "gemini":
+        base_url = None
         model = (
             configured_model
             if configured_model and "gemini" in configured_model
-            else "gemini-2.5-flash"
+            else "gemini-3.8-flash"
         )
+    elif provider == "groq":
+        base_url = "https://api.groq.com/openai/v1"
+        model = configured_model or "llama-3.3-70b-versatile"
     else:
         provider = "openai"
         base_url = None
@@ -544,24 +552,69 @@ def analyze_and_draft_ticket(
 
     if not force_fallback and api_key:
         try:
-            client_kwargs = {"api_key": api_key, "timeout": 8.0}
-            if base_url:
-                client_kwargs["base_url"] = base_url
-            client = OpenAI(**client_kwargs)
+            raw_content = ""
+            usage_tokens = None
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.2,
-                response_format={"type": "json_object"},
-            )
+            if provider == "gemini":
+                gemini_client = genai.Client(api_key=api_key)
+                combined_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-            raw_content = response.choices[0].message.content or "{}"
-            # Strip markdown code fences if any model includes them
+                try:
+                    interaction = gemini_client.interactions.create(
+                        model=model,
+                        input=combined_prompt,
+                    )
+                    raw_content = getattr(interaction, "output_text", None) or ""
+                    if not raw_content and getattr(interaction, "outputs", None):
+                        for out_item in reversed(interaction.outputs):
+                            txt = getattr(out_item, "text", None)
+                            if txt:
+                                raw_content = txt
+                                break
+                    usage_obj = getattr(interaction, "usage", None)
+                    if usage_obj:
+                        in_tok = getattr(usage_obj, "total_input_tokens", None)
+                        out_tok = getattr(usage_obj, "total_output_tokens", None)
+                        if in_tok is not None and out_tok is not None:
+                            usage_tokens = int(in_tok) + int(out_tok)
+                        else:
+                            usage_tokens = (
+                                getattr(usage_obj, "total_tokens", None)
+                                or getattr(usage_obj, "total_token_count", None)
+                            )
+                except Exception:
+                    gen_resp = gemini_client.models.generate_content(
+                        model=model,
+                        contents=combined_prompt,
+                    )
+                    raw_content = getattr(gen_resp, "text", "") or ""
+                    usage_meta = getattr(gen_resp, "usage_metadata", None)
+                    if usage_meta:
+                        usage_tokens = getattr(usage_meta, "total_token_count", None)
+            else:
+                client_kwargs = {"api_key": api_key, "timeout": 8.0}
+                if base_url:
+                    client_kwargs["base_url"] = base_url
+                client = OpenAI(**client_kwargs)
+
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                )
+                raw_content = response.choices[0].message.content or "{}"
+                usage_tokens = getattr(response.usage, "total_tokens", None) if response.usage else None
+
+            # Strip markdown code fences or surrounding prose if any model includes them
             cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content.strip(), flags=re.IGNORECASE)
+            if not cleaned.startswith("{"):
+                match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+                if match:
+                    cleaned = match.group(0)
             parsed = json.loads(cleaned)
 
             category = parsed.get("category")
@@ -576,7 +629,6 @@ def analyze_and_draft_ticket(
             reasoning = (parsed.get("reasoning") or "").strip()
 
             if draft_response:
-                usage_tokens = getattr(response.usage, "total_tokens", None) if response.usage else None
                 tokens_used = int(usage_tokens) if usage_tokens else (estimated_prompt_tokens + estimate_tokens(raw_content))
                 return {
                     "category": category,

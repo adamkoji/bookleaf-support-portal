@@ -98,15 +98,17 @@ def list_admin_tickets(
     # Sort tickets
     if sort_by == "newest":
         filtered.sort(key=lambda t: (t.created_at or datetime.min), reverse=True)
+    elif sort_by == "oldest":
+        filtered.sort(key=lambda t: (t.created_at or datetime.min), reverse=False)
     elif sort_by == "updated":
         filtered.sort(key=lambda t: (t.updated_at or datetime.min), reverse=True)
     else:
-        # Default "urgent": Unresolved first, then Priority (Critical -> Low), then newest updated_at
+        # Default "urgent": Unresolved first, then Priority (Critical -> Low), then oldest unresolved first
         filtered.sort(
             key=lambda t: (
                 STATUS_RANK.get(t.status, 99),
                 PRIORITY_RANK.get(t.priority, 99),
-                -(t.updated_at.timestamp() if t.updated_at else 0),
+                (t.created_at.timestamp() if t.created_at else 0),
             )
         )
 
