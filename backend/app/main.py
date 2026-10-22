@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import engine, Base, SessionLocal, get_db
 from app.models import User, Book, Ticket
 from app.seed import seed_database
-from app.routers import auth
+from app.routers import auth, author, admin
 
 
 @asynccontextmanager
@@ -36,6 +36,8 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(author.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health", tags=["Health"])
@@ -56,4 +58,3 @@ def health_check(db: Session = Depends(get_db)):
             "tickets": ticket_count,
         },
     }
-
