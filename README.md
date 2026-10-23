@@ -1,6 +1,6 @@
 # BookLeaf Publishing — Author Support & Communication Portal
 
-A full-stack Author Support & Operations Portal built for **BookLeaf Publishing**. It connects two role-separated views—an **Author Self-Service Portal** and an **Internal Admin AI Triage & Operations Console**—on top of a shared FastAPI + SQLite WAL backend and a two-stage `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash` multimodal AI triage pipeline.
+A full-stack Author Support & Operations Portal built for **BookLeaf Publishing**. It connects two role-separated views—an **Author Self-Service Portal** and an **Internal Admin AI Triage & Operations Console**—on top of a shared FastAPI + SQLite WAL backend and a two-stage `gemini-3.8-flash` multimodal AI triage pipeline.
 
 ---
 
@@ -71,7 +71,7 @@ Create a `.env` file inside `backend/` (or copy variables from below):
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 JWT_SECRET_KEY=bookleaf-super-secret-jwt-key-2025
 DATABASE_URL=sqlite:///./bookleaf.db
 ```
@@ -146,7 +146,7 @@ Instead of stuffing the entire BookLeaf Knowledge Base and every book an author 
 1. **Scoped Book Context**: If a ticket targets a specific `book_id` (e.g., `BK003`), we serialize only that book's exact operational telemetry (`isbn`, `status`, `mrp`, `total_copies_sold`, `royalty_pending`, `last_royalty_payout_date`, `print_partner`, `available_on`). We only pass a compact summary of all the author's books when the ticket is `"General / Account Level"`.
 2. **Modular Knowledge Base (`KB_MODULES`)**: BookLeaf's operational policies, SLA timelines, and the 7 official sample query-to-response calibration rules are partitioned into category-specific modules (`Royalty & Payments`, `ISBN & Metadata`, `Printing & Quality`, `Distribution & Availability`, `Production & Publishing Status`, `General Inquiry`), reducing prompt context size by ~75% compared to full-KB injection.
 
-### 2. Multimodal Vision & Document Grounding (`gemini-2.5-flash`)
+### 2. Multimodal Vision & Document Grounding (`gemini-3.8-flash`)
 Authors can attach real images (`.png`, `.jpg`, `.webp`) or documents (`.pdf`, `.txt`) up to 5MB in the Support Query modal.
 - The base64 data URI is decoded in `ai_service.py` and passed directly to `google-genai` via `types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)` alongside the structured text prompt.
 - If an author uploads a screenshot of an Amazon ISBN mismatch or a photo of a misprinted page, Gemini inspects the visual evidence directly and cites it in both `ai_reasoning` (for the admin) and `ai_draft_response` (for the author).
