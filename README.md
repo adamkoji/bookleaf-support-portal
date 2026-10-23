@@ -6,9 +6,9 @@ A full-stack Author Support & Operations Portal built for **BookLeaf Publishing*
 
 ## Live Demo Links
 
-- **Live Web Application (Author & Admin Portals)**: `[Live URL Placeholder]`
-- **Interactive OpenAPI 3.0 / Swagger Spec**: `[Backend URL Placeholder]/docs`
-- **ReDoc API Reference**: `[Backend URL Placeholder]/redoc`
+- **Live Web Application (Author & Admin Portals)**: [https://your-vercel-domain.vercel.app](https://bookleaf-support-portal-cyan.vercel.app/)
+- **Interactive OpenAPI 3.0 / Swagger Spec**: [https://bookleaf-support-api-fjg2.onrender.com/docs](https://bookleaf-support-api-fjg2.onrender.com/docs)
+- **ReDoc API Reference**: [https://bookleaf-support-api-fjg2.onrender.com/redoc](https://bookleaf-support-api-fjg2.onrender.com/redoc)
 
 ---
 
