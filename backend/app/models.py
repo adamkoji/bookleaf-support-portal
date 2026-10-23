@@ -75,6 +75,7 @@ class Ticket(Base):
     subject = Column(String, nullable=False)
     description = Column(Text, nullable=False)
     attachment_name = Column(String, nullable=True)
+    attachment_data = Column(Text, nullable=True)
     status = Column(String, default="Open", nullable=False)  # Open, In Progress, Resolved, Closed
     category = Column(String, nullable=True)
     priority = Column(String, nullable=True)  # Critical, High, Medium, Low

@@ -91,6 +91,7 @@ class TicketCreateRequest(BaseModel):
     subject: str = Field(..., min_length=3, max_length=250)
     description: str = Field(..., min_length=3, max_length=10000)
     attachment_name: Optional[str] = Field(default=None, max_length=255)
+    attachment_data: Optional[str] = None
 
 
 class AuthorReplyRequest(BaseModel):
@@ -136,6 +137,7 @@ class AuthorTicketResponse(BaseModel):
     subject: str
     description: str
     attachment_name: Optional[str] = None
+    attachment_data: Optional[str] = None
     status: str
     category: Optional[str] = None
     priority: Optional[str] = None
@@ -160,6 +162,7 @@ class AdminTicketResponse(BaseModel):
     subject: str
     description: str
     attachment_name: Optional[str] = None
+    attachment_data: Optional[str] = None
     status: str
     category: Optional[str] = None
     priority: Optional[str] = None

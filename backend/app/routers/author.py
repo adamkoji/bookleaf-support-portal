@@ -126,6 +126,8 @@ def create_author_ticket(
     _ = current_user.books
 
     # Run AI triage & context-aware draft generation safely
+    clean_attachment_name = payload.attachment_name.strip() if payload.attachment_name else None
+    clean_attachment_data = payload.attachment_data.strip() if payload.attachment_data else None
     try:
         ai_result = analyze_and_draft_ticket(
             author=current_user,
@@ -133,6 +135,8 @@ def create_author_ticket(
             subject=payload.subject.strip(),
             description=payload.description.strip(),
             conversation_history=[],
+            attachment_name=clean_attachment_name,
+            attachment_data=clean_attachment_data,
         )
     except Exception:
         ai_result = {
@@ -156,7 +160,8 @@ def create_author_ticket(
         book_id=linked_book.id if linked_book else None,
         subject=payload.subject.strip(),
         description=payload.description.strip(),
-        attachment_name=payload.attachment_name.strip() if payload.attachment_name else None,
+        attachment_name=clean_attachment_name,
+        attachment_data=clean_attachment_data,
         status="Open",
         category=ai_result["category"],
         priority=ai_result["priority"],
@@ -218,11 +223,40 @@ def reply_to_author_ticket(
         created_at=now,
     )
     db.add(msg)
+    db.flush()
 
     # Re-open ticket if it was previously Resolved or Closed
     if ticket.status in ("Resolved", "Closed"):
         ticket.status = "In Progress"
-    ticket.updated_at = now
+
+    # Fetch the last 4 messages in chronological order and refresh AI draft for the new follow-up
+    recent_messages = (
+        db.query(TicketMessage)
+        .filter(TicketMessage.ticket_id == ticket.id)
+        .order_by(TicketMessage.created_at.asc(), TicketMessage.id.asc())
+        .all()[-4:]
+    )
+    _ = current_user.books
+    try:
+        ai_result = analyze_and_draft_ticket(
+            author=current_user,
+            book=ticket.book,
+            subject=ticket.subject,
+            description=ticket.description,
+            conversation_history=recent_messages,
+            attachment_name=ticket.attachment_name,
+            attachment_data=ticket.attachment_data,
+        )
+        ticket.category = ai_result["category"]
+        ticket.priority = ai_result["priority"]
+        ticket.ai_draft_response = ai_result["ai_draft_response"]
+        ticket.ai_reasoning = ai_result["ai_reasoning"]
+        ticket.ai_tokens_used = ai_result["ai_tokens_used"]
+        ticket.ai_provider_status = ai_result["ai_provider_status"]
+    except Exception:
+        pass
+
+    ticket.updated_at = datetime.utcnow()
 
     db.commit()
     db.refresh(ticket)

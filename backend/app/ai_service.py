@@ -1,14 +1,24 @@
+import base64
 import json
 import os
 import re
+import sys
+import time
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 from google import genai
+from google.genai import types as genai_types
 
 from app.config import settings
 from app.models import User, Book
+
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -258,28 +268,52 @@ def resolve_llm_config() -> tuple[str, str, str, Optional[str]]:
     return provider, api_key, model, base_url
 
 
+def _extract_message_fields(m) -> tuple[str, str, str]:
+    role = getattr(m, "sender_role", None) or (m.get("sender_role") if isinstance(m, dict) else "author")
+    name = getattr(m, "sender_name", None) or (m.get("sender_name") if isinstance(m, dict) else role)
+    msg_text = getattr(m, "message", None) or (m.get("message") if isinstance(m, dict) else str(m))
+    return str(role), str(name), str(msg_text)
+
+
 def build_rule_based_fallback(
     author: User,
     book: Optional[Book],
     subject: str,
     description: str,
     selected_categories: list[str],
+    conversation_history: Optional[list] = None,
 ) -> dict:
     """
     Deterministic, context-aware fallback classifier & response generator (Requirement D.3).
-    Uses exact author and book figures so responses are deeply specific even when offline.
+    Uses exact author and book figures so responses are deeply specific even when offline,
+    and adapts naturally to multi-turn follow-up messages.
     """
-    combined = f"{subject} {description}".lower()
+    latest_author_msg = ""
+    has_prior_admin_reply = False
+    is_followup = False
+
+    if conversation_history and len(conversation_history) > 1:
+        is_followup = True
+        for m in conversation_history:
+            r_role, _, r_text = _extract_message_fields(m)
+            if r_role.lower() == "admin":
+                has_prior_admin_reply = True
+            elif r_role.lower() == "author":
+                latest_author_msg = r_text.strip()
+
+    active_query_text = latest_author_msg if (is_followup and latest_author_msg) else f"{subject} {description}"
+    combined = f"{subject} {description} {latest_author_msg}".lower()
+    latest_lower = active_query_text.lower().strip()
     primary_category = selected_categories[0] if selected_categories else "General Inquiry"
 
     # Refine category based on high-confidence signals
-    if any(k in combined for k in ["isbn", "mismatch", "wrong book", "duplicate isbn", "onix"]):
+    if any(k in combined for k in ["isbn mismatch", "wrong isbn", "wrong book", "duplicate isbn", "onix", "metadata mismatch"]):
         primary_category = "ISBN & Metadata Issues"
     elif any(k in combined for k in ["blurry", "faded", "misprint", "defective", "binding", "torn", "print quality", "trim"]):
         primary_category = "Printing & Quality"
     elif any(k in combined for k in ["royalty", "payout", "pending", "neft", "payment", "80/20", "threshold", "1,000"]):
         primary_category = "Royalty & Payments"
-    elif any(k in combined for k in ["currently unavailable", "unavailable", "out of stock", "flipkart", "amazon us", "amazon uk", "not showing on amazon"]):
+    elif any(k in combined for k in ["currently unavailable", "unavailable", "out of stock", "not showing on amazon"]):
         primary_category = "Distribution & Availability"
     elif any(k in combined for k in ["in production", "cover design", "typesetting", "proofreading", "when will my book", "publication date", "mockup"]):
         primary_category = "Book Status & Production Updates"
@@ -309,8 +343,75 @@ def build_rule_based_fallback(
             if b.title.lower() in combined or b.book_code.lower() in combined:
                 target_book = b
                 break
+        if target_book is None and author_books:
+            target_book = author_books[0]
 
     first_name = author.name.split()[0] if author.name else "Author"
+
+    # Multi-turn / Casual Follow-up Handling in Fallback Mode
+    if is_followup and latest_author_msg:
+        book_ref = f"*{target_book.title}* ({target_book.book_code})" if target_book else "your book"
+        # Check if casual greeting, check-in, or "how is my book"
+        if any(p in latest_lower for p in ["how is my book", "is it good", "doing well", "how is it doing", "sales going"]):
+            if target_book and (target_book.total_copies_sold or 0) > 0:
+                draft = (
+                    f"Hi {first_name},\n\n"
+                    f"{book_ref} is doing wonderfully! It has sold **{target_book.total_copies_sold} copies** across "
+                    f"{', '.join(target_book.available_on) if target_book.available_on else 'our retail channels'} so far, "
+                    f"generating **₹{target_book.total_royalty_earned:,.0f}** in total royalties.\n\n"
+                    f"We are really proud to have {book_ref} in the BookLeaf catalog. Let me know if there is anything else I can help you with!\n\n"
+                    f"Warm regards,\n"
+                    f"BookLeaf Author Support Team"
+                )
+            else:
+                status_label = target_book.status if target_book else "in production"
+                draft = (
+                    f"Hi {first_name},\n\n"
+                    f"{book_ref} is progressing well and is currently at the **{status_label}** stage! "
+                    f"Our team is excited about the title and will keep you posted as the next milestone is ready.\n\n"
+                    f"Please let me know if you have any specific questions or feedback!\n\n"
+                    f"Warm regards,\n"
+                    f"BookLeaf Author Support Team"
+                )
+            return {
+                "category": primary_category,
+                "priority": priority,
+                "reasoning": f"Multi-turn follow-up response to author's check-in ('{latest_author_msg[:60]}'), sharing a warm, concise update on {book_ref}.",
+                "draft_response": draft,
+            }
+
+        if len(latest_lower) <= 35 and any(g in latest_lower for g in ["hi", "hii", "hello", "hey", "how are you", "thanks", "thank you", "ok", "okay"]):
+            draft = (
+                f"Hi {first_name},\n\n"
+                f"I'm doing well, thank you for asking! Everything on your ticket regarding {book_ref} is on track on our end.\n\n"
+                f"Please let me know if you have any additional questions or if there is anything else I can assist you with today!\n\n"
+                f"Warm regards,\n"
+                f"BookLeaf Author Support Team"
+            )
+            return {
+                "category": primary_category,
+                "priority": "Low",
+                "reasoning": f"Conversational multi-turn reply to the author's brief message ('{latest_author_msg}') without repeating the full ledger summary.",
+                "draft_response": draft,
+            }
+
+        if has_prior_admin_reply:
+            draft = (
+                f"Hi {first_name},\n\n"
+                f"Thank you for your follow-up regarding {book_ref}. I have noted your message:\n"
+                f"> *\"{latest_author_msg}\"*\n\n"
+                f"Our team is actively tracking this under your ticket and will ensure any updates on {book_ref} "
+                f"(Current Status: **{target_book.status if target_book else 'Active'}**) are completed within our **48-hour** support window.\n\n"
+                f"Please let me know if you need anything else in the meantime!\n\n"
+                f"Warm regards,\n"
+                f"BookLeaf Author Support Team"
+            )
+            return {
+                "category": primary_category,
+                "priority": priority,
+                "reasoning": f"Multi-turn follow-up draft addressing the author's latest reply ('{latest_author_msg[:80]}') without repeating previous support messages.",
+                "draft_response": draft,
+            }
 
     if primary_category == "Royalty & Payments":
         if target_book:
@@ -495,6 +596,100 @@ def build_rule_based_fallback(
     }
 
 
+def _parse_attachment_data_url(attachment_data: Optional[str]) -> tuple[Optional[str], Optional[bytes]]:
+    """
+    Parses a base64 data URL like 'data:image/png;base64,iVBOR...' into (mime_type, raw_bytes).
+    Returns (None, None) if not a valid data URL.
+    """
+    if not attachment_data or not isinstance(attachment_data, str):
+        return None, None
+    s = attachment_data.strip()
+    if not s.startswith("data:") or ";base64," not in s:
+        return None, None
+    try:
+        header, b64_payload = s.split(";base64,", 1)
+        mime_type = header.replace("data:", "", 1).strip() or "application/octet-stream"
+        raw_bytes = base64.b64decode(b64_payload)
+        return mime_type, raw_bytes
+    except Exception:
+        return None, None
+
+
+def _print_ai_telemetry(
+    *,
+    trigger_label: str,
+    author: User,
+    book: Optional[Book],
+    subject: str,
+    latest_message: str,
+    turn_count: int,
+    selected_modules: list[str],
+    provider: str,
+    model: str,
+    provider_status: str,
+    fallback_reason: Optional[str],
+    latency_sec: float,
+    input_tokens: Optional[int],
+    output_tokens: Optional[int],
+    total_tokens: int,
+    category: str,
+    priority: str,
+    reasoning: str,
+    draft_response: str,
+    attachment_name: Optional[str] = None,
+    attachment_mime: Optional[str] = None,
+    multimodal_analyzed: bool = False,
+) -> None:
+    latency_ms = latency_sec * 1000.0
+    savings_pct = max(
+        0,
+        round(((NAIVE_FULL_CONTEXT_TOKENS - total_tokens) / NAIVE_FULL_CONTEXT_TOKENS) * 100),
+    )
+    book_str = f"{book.title} ({book.book_code}, Status: {book.status})" if book else "General / Account Level"
+    tok_detail = (
+        f"in={input_tokens}, out={output_tokens}, total={total_tokens}"
+        if (input_tokens is not None and output_tokens is not None)
+        else f"total={total_tokens}"
+    )
+    provider_line = (
+        f"LIVE LLM ({provider.upper()} / {model})"
+        if provider_status == "success"
+        else f"FALLBACK ENGINE (Reason: {fallback_reason or 'Offline / Force Fallback'})"
+    )
+    if attachment_name:
+        if multimodal_analyzed:
+            attach_line = f"{attachment_name} ({attachment_mime or 'file'}) -> MULTIMODAL GEMINI VISION/FILE ANALYZED"
+        else:
+            attach_line = f"{attachment_name} ({attachment_mime or 'metadata only'})"
+    else:
+        attach_line = "None"
+    divider = "=" * 88
+    block = (
+        f"\n{divider}\n"
+        f"🤖 [BOOKLEAF AI TRIAGE & DRAFT TELEMETRY] — {trigger_label}\n"
+        f"{divider}\n"
+        f"• Author Context   : {author.name} ({author.author_code or author.email})\n"
+        f"• Book Context     : {book_str}\n"
+        f"• Ticket Subject   : {subject}\n"
+        f"• Attachment       : {attach_line}\n"
+        f"• Conversation Turn: Turn #{turn_count} | Answering: \"{latest_message[:140]}\"\n"
+        f"• Selected KB (2/6): {', '.join(selected_modules)}\n"
+        f"• AI Engine Mode   : {provider_line}\n"
+        f"• Execution Time   : {latency_ms:.1f} ms ({latency_sec:.2f}s)\n"
+        f"• Token Usage      : {tok_detail} (Baseline: {NAIVE_FULL_CONTEXT_TOKENS} | ~{savings_pct}% saved)\n"
+        f"• Classification   : Category='{category}' | Priority='{priority}'\n"
+        f"• AI Reasoning     : {reasoning}\n"
+        f"• Generated Draft  :\n"
+        f"----------------------------------------------------------------------------------------\n"
+        f"{draft_response}\n"
+        f"{divider}\n"
+    )
+    try:
+        print(block, flush=True)
+    except Exception:
+        print(block.encode("ascii", errors="replace").decode("ascii"), flush=True)
+
+
 def analyze_and_draft_ticket(
     author: User,
     book: Optional[Book],
@@ -502,95 +697,196 @@ def analyze_and_draft_ticket(
     description: str,
     conversation_history: Optional[list] = None,
     force_fallback: bool = False,
+    attachment_name: Optional[str] = None,
+    attachment_data: Optional[str] = None,
 ) -> dict:
     """
     Context-Aware AI Triage & Response Draft Engine:
     1. Selects only the top 2 relevant KB modules + Core Overview & Tone (token efficiency).
     2. Injects only the linked Book record (or compact summary if General).
-    3. Includes at most the last 3 conversation messages.
-    4. Calls the configured LLM provider (Groq / Gemini / OpenAI) with an 8s timeout.
+    3. Includes recent conversation messages and highlights the latest author follow-up message.
+    4. Calls the configured LLM provider (Gemini / Groq / OpenAI) with an 8s timeout.
     5. Gracefully falls back to the deterministic context-aware engine if no key is set,
        force_fallback=True, or the LLM API errors/times out.
     """
-    selected_categories = select_relevant_kb_modules(subject, description)
-    selected_kb_text = "\n\n".join(KB_MODULES[cat] for cat in selected_categories)
-    db_context = build_compact_db_context(author, book)
+    start_perf = time.perf_counter()
+    latest_author_message = ""
+    has_admin_replied = False
+    is_followup = False
+    turn_count = len(conversation_history) if conversation_history else 1
 
     history_snippet = ""
     if conversation_history:
-        recent_msgs = conversation_history[-3:]
+        recent_msgs = conversation_history[-4:]
+        if len(conversation_history) > 1:
+            is_followup = True
         formatted_msgs = []
         for m in recent_msgs:
-            role = getattr(m, "sender_role", None) or (m.get("sender_role") if isinstance(m, dict) else "user")
-            name = getattr(m, "sender_name", None) or (m.get("sender_name") if isinstance(m, dict) else role)
-            msg_text = getattr(m, "message", None) or (m.get("message") if isinstance(m, dict) else str(m))
+            role, name, msg_text = _extract_message_fields(m)
+            if role.lower() == "admin":
+                has_admin_replied = True
+            elif role.lower() == "author":
+                latest_author_message = msg_text.strip()
             formatted_msgs.append(f"[{role.upper()} - {name}]: {msg_text}")
-        history_snippet = "\n[RECENT CONVERSATION HISTORY (LAST 3 MESSAGES)]\n" + "\n".join(formatted_msgs)
+        history_snippet = "\n[RECENT CONVERSATION HISTORY]\n" + "\n".join(formatted_msgs)
+
+    active_message_display = latest_author_message if (is_followup and latest_author_message) else description
+    trigger_label = (
+        f"Multi-Turn Follow-Up Reply (Turn #{turn_count})"
+        if is_followup
+        else "Initial Ticket Triage (Turn #1)"
+    )
+
+    kb_search_description = (
+        f"{description}\n{latest_author_message}" if is_followup and latest_author_message else description
+    )
+    selected_categories = select_relevant_kb_modules(subject, kb_search_description)
+    selected_kb_text = "\n\n".join(KB_MODULES[cat] for cat in selected_categories)
+    db_context = build_compact_db_context(author, book)
+
+    multi_turn_instruction = (
+        "\n[MULTI-TURN CONVERSATION & FOLLOW-UP RULES]\n"
+        "- If `RECENT CONVERSATION HISTORY` shows an ongoing thread where Support (ADMIN) has already replied, "
+        "DO NOT repeat the exact same opening greeting or re-dump the entire book financial summary if it was already shared in a previous message.\n"
+        "- Respond directly, naturally, and specifically to the author's LATEST message in the conversation while staying consistent with BookLeaf policies and database figures.\n"
+        "- If the author sends a casual greeting or brief check-in (e.g., 'hii', 'how are you?', 'how is my book? is it good?'), "
+        "keep the reply warm, conversational, encouraging, and concise rather than dumping a giant wall of numbers unless relevant."
+    )
 
     system_prompt = (
-        f"{CORE_OVERVIEW_AND_TONE}\n\n"
+        f"{CORE_OVERVIEW_AND_TONE}\n"
+        f"{multi_turn_instruction}\n\n"
         f"[SELECTED KNOWLEDGE BASE MODULES (TOP 2 RELEVANT)]\n{selected_kb_text}\n\n"
         "You are an expert AI Triage & Draft Assistant for BookLeaf Publishing's Support Team.\n"
-        "Analyze the author's ticket and the injected database record, then return ONLY a valid JSON object with these exact keys:\n"
+        "Analyze the ticket conversation and the injected database record, then return ONLY a valid JSON object with these exact keys:\n"
         f'- "category": Must be strictly one of {json.dumps(VALID_CATEGORIES)}\n'
         f'- "priority": Must be strictly one of {json.dumps(VALID_PRIORITIES)}\n'
-        '- "reasoning": 1-2 concise sentences explaining why this category and priority were chosen, referencing specific DB facts.\n'
-        '- "draft_response": A warm, empathetic, ready-to-send response to the author citing their exact book title, ISBN, status, copies sold, and rupee (₹) royalty numbers from the DB context.'
+        '- "reasoning": 1-2 concise sentences explaining why this category and priority were chosen and how the draft addresses the latest author message.\n'
+        '- "draft_response": A warm, empathetic, ready-to-send response to the author tailored to their LATEST message in the thread.'
     )
 
-    user_prompt = (
-        f"[AUTHOR & BOOK DATABASE CONTEXT]\n{db_context}\n"
-        f"{history_snippet}\n\n"
-        f"[INCOMING SUPPORT TICKET]\n"
-        f"Subject: {subject}\n"
-        f"Description: {description}\n\n"
-        "Respond strictly with valid JSON."
-    )
+    attachment_mime, attachment_bytes = _parse_attachment_data_url(attachment_data)
+    attachment_prompt_note = ""
+    if attachment_name:
+        attachment_prompt_note = (
+            f"\n[ATTACHED FILE CONTEXT]\n"
+            f"The author attached a file (`{attachment_name}`"
+            f"{f', MIME: {attachment_mime}' if attachment_mime else ''}). "
+            f"Inspect the attached image/file carefully and acknowledge what you see in your `reasoning` and `draft_response`!\n"
+        )
+        # If it is a plain text file, also decode a snippet so text-only fallbacks can see it
+        if attachment_bytes and attachment_mime and attachment_mime.startswith("text/"):
+            try:
+                text_preview = attachment_bytes.decode("utf-8", errors="replace")[:2000]
+                attachment_prompt_note += f"Attached Text File Preview:\n{text_preview}\n"
+            except Exception:
+                pass
+
+    if is_followup and latest_author_message:
+        user_prompt = (
+            f"[AUTHOR & BOOK DATABASE CONTEXT]\n{db_context}\n\n"
+            f"[ORIGINAL TICKET]\nSubject: {subject}\nInitial Description: {description}\n"
+            f"{attachment_prompt_note}"
+            f"{history_snippet}\n\n"
+            f"[LATEST AUTHOR FOLLOW-UP MESSAGE — RESPOND DIRECTLY TO THIS]\n"
+            f"\"{latest_author_message}\"\n"
+            f"(Note: Support has {'already replied previously in this thread' if has_admin_replied else 'not replied yet'}. "
+            "Draft the next Support response addressing the author's latest message above directly and naturally.)\n\n"
+            "Respond strictly with valid JSON."
+        )
+    else:
+        user_prompt = (
+            f"[AUTHOR & BOOK DATABASE CONTEXT]\n{db_context}\n"
+            f"{history_snippet}\n\n"
+            f"[INCOMING SUPPORT TICKET]\n"
+            f"Subject: {subject}\n"
+            f"Description: {description}\n"
+            f"{attachment_prompt_note}\n"
+            "Respond strictly with valid JSON."
+        )
 
     estimated_prompt_tokens = estimate_tokens(system_prompt + "\n" + user_prompt)
     provider, api_key, model, base_url = resolve_llm_config()
+    fallback_reason = None
+    multimodal_analyzed = False
+
+    if force_fallback:
+        fallback_reason = "force_fallback=True requested (Simulated AI Outage)"
+    elif not api_key:
+        fallback_reason = "No LLM_API_KEY configured in environment"
 
     if not force_fallback and api_key:
         try:
             raw_content = ""
             usage_tokens = None
+            in_tok = None
+            out_tok = None
 
             if provider == "gemini":
                 gemini_client = genai.Client(api_key=api_key)
                 combined_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-                try:
-                    interaction = gemini_client.interactions.create(
-                        model=model,
-                        input=combined_prompt,
-                    )
-                    raw_content = getattr(interaction, "output_text", None) or ""
-                    if not raw_content and getattr(interaction, "outputs", None):
-                        for out_item in reversed(interaction.outputs):
-                            txt = getattr(out_item, "text", None)
-                            if txt:
-                                raw_content = txt
-                                break
-                    usage_obj = getattr(interaction, "usage", None)
-                    if usage_obj:
-                        in_tok = getattr(usage_obj, "total_input_tokens", None)
-                        out_tok = getattr(usage_obj, "total_output_tokens", None)
-                        if in_tok is not None and out_tok is not None:
-                            usage_tokens = int(in_tok) + int(out_tok)
-                        else:
-                            usage_tokens = (
-                                getattr(usage_obj, "total_tokens", None)
-                                or getattr(usage_obj, "total_token_count", None)
-                            )
-                except Exception:
-                    gen_resp = gemini_client.models.generate_content(
-                        model=model,
-                        contents=combined_prompt,
-                    )
-                    raw_content = getattr(gen_resp, "text", "") or ""
-                    usage_meta = getattr(gen_resp, "usage_metadata", None)
-                    if usage_meta:
-                        usage_tokens = getattr(usage_meta, "total_token_count", None)
+                # When a binary/image/PDF attachment is present, pass it as a multimodal Part first
+                if attachment_bytes and attachment_mime and (
+                    attachment_mime.startswith("image/")
+                    or attachment_mime == "application/pdf"
+                    or attachment_mime.startswith("text/")
+                ):
+                    try:
+                        file_part = genai_types.Part.from_bytes(
+                            data=attachment_bytes,
+                            mime_type=attachment_mime,
+                        )
+                        gen_resp = gemini_client.models.generate_content(
+                            model=model,
+                            contents=[file_part, combined_prompt],
+                        )
+                        raw_content = getattr(gen_resp, "text", "") or ""
+                        if raw_content:
+                            multimodal_analyzed = True
+                        usage_meta = getattr(gen_resp, "usage_metadata", None)
+                        if usage_meta:
+                            in_tok = getattr(usage_meta, "prompt_token_count", None)
+                            out_tok = getattr(usage_meta, "candidates_token_count", None)
+                            usage_tokens = getattr(usage_meta, "total_token_count", None)
+                    except Exception:
+                        raw_content = ""
+
+                if not raw_content:
+                    try:
+                        interaction = gemini_client.interactions.create(
+                            model=model,
+                            input=combined_prompt,
+                        )
+                        raw_content = getattr(interaction, "output_text", None) or ""
+                        if not raw_content and getattr(interaction, "outputs", None):
+                            for out_item in reversed(interaction.outputs):
+                                txt = getattr(out_item, "text", None)
+                                if txt:
+                                    raw_content = txt
+                                    break
+                        usage_obj = getattr(interaction, "usage", None)
+                        if usage_obj:
+                            in_tok = getattr(usage_obj, "total_input_tokens", None)
+                            out_tok = getattr(usage_obj, "total_output_tokens", None)
+                            if in_tok is not None and out_tok is not None:
+                                usage_tokens = int(in_tok) + int(out_tok)
+                            else:
+                                usage_tokens = (
+                                    getattr(usage_obj, "total_tokens", None)
+                                    or getattr(usage_obj, "total_token_count", None)
+                                )
+                    except Exception:
+                        gen_resp = gemini_client.models.generate_content(
+                            model=model,
+                            contents=combined_prompt,
+                        )
+                        raw_content = getattr(gen_resp, "text", "") or ""
+                        usage_meta = getattr(gen_resp, "usage_metadata", None)
+                        if usage_meta:
+                            in_tok = getattr(usage_meta, "prompt_token_count", None)
+                            out_tok = getattr(usage_meta, "candidates_token_count", None)
+                            usage_tokens = getattr(usage_meta, "total_token_count", None)
             else:
                 client_kwargs = {"api_key": api_key, "timeout": 8.0}
                 if base_url:
@@ -607,7 +903,10 @@ def analyze_and_draft_ticket(
                     response_format={"type": "json_object"},
                 )
                 raw_content = response.choices[0].message.content or "{}"
-                usage_tokens = getattr(response.usage, "total_tokens", None) if response.usage else None
+                if response.usage:
+                    in_tok = getattr(response.usage, "prompt_tokens", None)
+                    out_tok = getattr(response.usage, "completion_tokens", None)
+                    usage_tokens = getattr(response.usage, "total_tokens", None)
 
             # Strip markdown code fences or surrounding prose if any model includes them
             cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_content.strip(), flags=re.IGNORECASE)
@@ -630,20 +929,46 @@ def analyze_and_draft_ticket(
 
             if draft_response:
                 tokens_used = int(usage_tokens) if usage_tokens else (estimated_prompt_tokens + estimate_tokens(raw_content))
+                final_reasoning = reasoning or f"Classified via {provider.upper()} ({model}) using top-2 KB modules ({', '.join(selected_categories)})."
+                latency_sec = time.perf_counter() - start_perf
+                _print_ai_telemetry(
+                    trigger_label=trigger_label,
+                    author=author,
+                    book=book,
+                    subject=subject,
+                    latest_message=active_message_display,
+                    turn_count=turn_count,
+                    selected_modules=selected_categories,
+                    provider=provider,
+                    model=model,
+                    provider_status="success",
+                    fallback_reason=None,
+                    latency_sec=latency_sec,
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    total_tokens=tokens_used,
+                    category=category,
+                    priority=priority,
+                    reasoning=final_reasoning,
+                    draft_response=draft_response,
+                    attachment_name=attachment_name,
+                    attachment_mime=attachment_mime,
+                    multimodal_analyzed=multimodal_analyzed,
+                )
                 return {
                     "category": category,
                     "priority": priority,
                     "ai_draft_response": draft_response,
-                    "ai_reasoning": reasoning or f"Classified via {provider.upper()} ({model}) using top-2 KB modules ({', '.join(selected_categories)}).",
+                    "ai_reasoning": final_reasoning,
                     "ai_tokens_used": tokens_used,
                     "ai_provider_status": "success",
                     "selected_kb_modules": selected_categories,
                     "naive_full_context_tokens": NAIVE_FULL_CONTEXT_TOKENS,
                     "tokens_saved": max(0, NAIVE_FULL_CONTEXT_TOKENS - tokens_used),
                 }
-        except Exception:
+        except Exception as exc:
             # Graceful Degradation (Requirement D.3): never crash on LLM failure/rate-limit/timeout
-            pass
+            fallback_reason = f"{type(exc).__name__}: {str(exc)[:120]}"
 
     fallback_result = build_rule_based_fallback(
         author=author,
@@ -651,8 +976,35 @@ def analyze_and_draft_ticket(
         subject=subject,
         description=description,
         selected_categories=selected_categories,
+        conversation_history=conversation_history,
     )
-    tokens_used = estimated_prompt_tokens + estimate_tokens(fallback_result["draft_response"])
+    out_est = estimate_tokens(fallback_result["draft_response"])
+    tokens_used = estimated_prompt_tokens + out_est
+    latency_sec = time.perf_counter() - start_perf
+    _print_ai_telemetry(
+        trigger_label=trigger_label,
+        author=author,
+        book=book,
+        subject=subject,
+        latest_message=active_message_display,
+        turn_count=turn_count,
+        selected_modules=selected_categories,
+        provider=provider,
+        model=model,
+        provider_status="fallback",
+        fallback_reason=fallback_reason,
+        latency_sec=latency_sec,
+        input_tokens=estimated_prompt_tokens,
+        output_tokens=out_est,
+        total_tokens=tokens_used,
+        category=fallback_result["category"],
+        priority=fallback_result["priority"],
+        reasoning=fallback_result["reasoning"],
+        draft_response=fallback_result["draft_response"],
+        attachment_name=attachment_name,
+        attachment_mime=attachment_mime,
+        multimodal_analyzed=False,
+    )
     return {
         "category": fallback_result["category"],
         "priority": fallback_result["priority"],

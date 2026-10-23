@@ -324,13 +324,22 @@ def regenerate_ticket_ai(
 
     force_fallback = payload.force_fallback if payload else False
 
+    recent_messages = (
+        db.query(TicketMessage)
+        .filter(TicketMessage.ticket_id == ticket.id)
+        .order_by(TicketMessage.created_at.asc(), TicketMessage.id.asc())
+        .all()[-4:]
+    )
+
     ai_result = analyze_and_draft_ticket(
         author=ticket.author,
         book=ticket.book,
         subject=ticket.subject,
         description=ticket.description,
-        conversation_history=ticket.messages,
+        conversation_history=recent_messages,
         force_fallback=force_fallback,
+        attachment_name=ticket.attachment_name,
+        attachment_data=ticket.attachment_data,
     )
 
     ticket.category = ai_result["category"]

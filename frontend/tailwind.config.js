@@ -9,16 +9,17 @@ module.exports = {
     extend: {
       colors: {
         bookleaf: {
-          50: "#f0fdf4",
-          100: "#dcfce7",
-          600: "#059669",
-          700: "#047857",
-          800: "#065f46",
-          900: "#064e3b",
+          coral: "#EC6568",
+          coralHover: "#D95356",
+          blush: "#FFF5F6",
+          blushDeep: "#FCE8EA",
+          iconBg: "#FDE8E9",
+          teal: "#3898A6",
+          dark: "#111111",
+          charcoal: "#222222",
         },
       },
     },
   },
   plugins: [],
 };
-
