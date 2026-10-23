@@ -56,39 +56,48 @@ KB_MODULES: dict[str, str] = {
 - Payout Schedule: Calculated quarterly and disbursed within 45 days of the end of each quarter.
 - Minimum Payout Threshold: ₹1,000. If total pending royalty is below ₹1,000, the balance automatically rolls over to the next quarterly cycle.
 - Payment Method: Direct bank transfer (NEFT/IMPS) to the author's linked bank account in the dashboard.
-- Sales Transparency: A line-by-line sales and royalty breakdown is available in the Author Dashboard.
+- Sample Calibration Rules:
+  * Sample 1 (Overdue Royalty / Not Credited): Cite exact copies sold, total royalty earned, paid amount, last payout date, and pending balance from DB. Confirm eligibility if pending >= ₹1,000, verify that linked bank account details are active, and commit to a Finance team transfer status check within 48 hours.
+  * Sample 2 (Why is my royalty lower than expected?): Explain the 80/20 net profit split clearly (MRP minus print cost, marketplace commission, and shipping), cite the exact per-copy author royalty rate (`author_royalty_per_copy`) and copies sold from DB, and point the author to the line-by-line sales breakdown in their Author Dashboard.
 """.strip(),
     "ISBN & Metadata Issues": """
 [KB MODULE: ISBN & METADATA ISSUES]
 - Imprint Policy: Every book receives a unique ISBN assigned under BookLeaf's publisher imprint (authors wishing to use their own imprint must obtain their ISBN independently prior to production).
 - Escalation Rule: Any ISBN error (duplicate ISBN, wrong book linked, mismatch between Amazon listing and physical copy) is treated as a HIGH or CRITICAL priority issue and escalated to the production & metadata team immediately with a strict 48-hour resolution timeline.
 - Metadata Updates: Book title/subtitle/description/category metadata updates take 3–5 business days to propagate across retail platforms after submission.
+- Sample Calibration Rule:
+  * Sample 3 (ISBN Mismatch / Wrong Book Linked on Amazon): Acknowledge the severity immediately without deflection, classify as High/Critical priority, cite the book's canonical ISBN from the database, and confirm immediate escalation to the Production & Metadata team with a strict 48-hour resolution window.
 """.strip(),
     "Printing & Quality": """
 [KB MODULE: PRINTING & QUALITY]
 - Facilities: BookLeaf's In-House Delhi facility handles the majority of print runs; overflow or special formats are fulfilled by Repro India or Epitome Books.
 - Standard Turnaround: 5–7 business days for printing and dispatch.
-- Quality Defect Protocol: For any physical quality defects (misprints, blurry images/diagrams, faded ink, binding defects, misaligned or miscut pages):
-  1. Apologize sincerely and own the issue without deflection.
-  2. Ask the author to share clear photos of the defective copies (and order IDs if not already attached).
-  3. Confirm that BookLeaf will arrange a free replacement reprint within 5–7 business days after verification.
+- Quality Defect Protocol & Sample Calibration Rule:
+  * Sample 4 (Blurry Print / Faded Ink / Binding / Misaligned Pages):
+    1. Apologize sincerely and take direct ownership of the print quality defect without corporate deflection.
+    2. Cite the book's assigned print partner (`print_partner`: In-House, Repro India, or Epitome Books) from the database.
+    3. Ask the author to share clear photos of the defective pages/binding (or acknowledge their uploaded photo attachment if already provided) and order IDs.
+    4. Confirm that BookLeaf will dispatch a free replacement reprint within 5–7 business days after verification.
 """.strip(),
     "Distribution & Availability": """
 [KB MODULE: DISTRIBUTION & AVAILABILITY]
 - Retail Channels: Books are distributed across Amazon India, Flipkart, Amazon US, Amazon UK, and the BookLeaf Store.
 - Launch Timeline: Newly published listings go live across all selected channels within 7–10 business days after publication.
-- "Currently Unavailable" / Out-of-Stock Issues: Almost always caused by an automated inventory/stock feed sync lag between our print partner and the marketplace. Confirm that we are triggering an immediate distribution feed re-sync, which resolves within 24–48 hours.
+- Sample Calibration Rule:
+  * Sample 5 ("Currently Unavailable" / Out-of-Stock on Amazon or Flipkart): Reassure the author, cite the book's active channels (`available_on`) and status from DB, explain that temporary unavailability is caused by an automated inventory feed sync lag between our print partner and the marketplace, and confirm an immediate manual distribution stock re-sync that resolves within 24–48 hours.
 """.strip(),
     "Book Status & Production Updates": """
 [KB MODULE: BOOK STATUS & PRODUCTION UPDATES]
 - Official Production Pipeline:
   Manuscript Received -> Editing (if opted) -> Cover Design -> Typesetting -> Proofreading -> ISBN Assignment -> Printing -> Distribution Setup -> Published & Live.
 - Common Bottlenecks: Delays most frequently happen at Cover Design (awaiting concept alignment/approval) and Proofreading (revision rounds).
-- Communication Rule: Always reference the book's exact current status from the database, remain honest and collaborative (never blame the author for delays), note that MRP/royalty per copy are finalized once typesetting & cover specs lock, and provide a clear 48-hour or stage-specific timeline.
+- Sample Calibration Rule:
+  * Sample 6 (Book Stuck in Production / When Will My Book Be Published?): Reference the book's exact current status from the database (`status`), remain honest, empathetic, and collaborative (never blame the author for delays), explain where their stage sits in the 9-step pipeline, note that MRP and royalty per copy lock upon typesetting/cover completion, and commit to a concrete milestone update within 48 hours.
 """.strip(),
     "General Inquiry": """
 [KB MODULE: GENERAL INQUIRY]
-- Profile & Metadata Updates: Updates to book descriptions, author bios, bank details, or contact info can be submitted via the Author Dashboard or by emailing BookLeaf support, and reflect on retail platforms within 3–5 business days.
+- Profile & Metadata Updates (Sample 7 Calibration Rule — Updating Book Description / Author Bio / Bank Details):
+  * Updates to book descriptions, author bios, bank details, or contact info can be submitted via the Author Dashboard or through support, and reflect across retail platforms (Amazon, Flipkart, BookLeaf Store) within 3–5 business days.
 - Package & Account Support: Support covers both Standard Free and Bestseller Breakthrough packages with a 48-hour response commitment.
 """.strip(),
 }

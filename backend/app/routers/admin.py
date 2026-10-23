@@ -39,6 +39,7 @@ def list_admin_tickets(
     status_filter: Optional[str] = Query(default=None, alias="status"),
     category: Optional[str] = Query(default=None),
     priority: Optional[str] = Query(default=None),
+    date_filter: Optional[str] = Query(default=None, alias="date"),
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="urgent"),
     current_admin: User = Depends(require_admin),
@@ -80,6 +81,31 @@ def list_admin_tickets(
 
     if priority and priority.lower() != "all":
         filtered = [t for t in filtered if (t.priority or "").lower() == priority.strip().lower()]
+
+    if date_filter and date_filter.lower() != "all":
+        df = date_filter.strip().lower()
+        now_utc = datetime.utcnow()
+        if df == "today":
+            filtered = [
+                t for t in filtered
+                if t.created_at and (now_utc - t.created_at).total_seconds() <= 86400
+            ]
+        elif df in ("7d", "last_7_days", "week"):
+            filtered = [
+                t for t in filtered
+                if t.created_at and (now_utc - t.created_at).total_seconds() <= 7 * 86400
+            ]
+        elif df in ("30d", "last_30_days", "month"):
+            filtered = [
+                t for t in filtered
+                if t.created_at and (now_utc - t.created_at).total_seconds() <= 30 * 86400
+            ]
+        else:
+            # Support YYYY-MM-DD prefix matching if passed
+            filtered = [
+                t for t in filtered
+                if t.created_at and t.created_at.strftime("%Y-%m-%d").startswith(df)
+            ]
 
     if search and search.strip():
         q = search.strip().lower()

@@ -87,6 +87,7 @@ export default function AdminPortalPage() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
+  const [dateFilter, setDateFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("urgent");
 
@@ -125,6 +126,7 @@ export default function AdminPortalPage() {
           status: statusFilter,
           category: categoryFilter,
           priority: priorityFilter,
+          date: dateFilter,
           search: searchQuery,
           sort_by: sortBy,
         });
@@ -148,7 +150,7 @@ export default function AdminPortalPage() {
         if (!isBackground) setLoading(false);
       }
     },
-    [statusFilter, categoryFilter, priorityFilter, searchQuery, sortBy]
+    [statusFilter, categoryFilter, priorityFilter, dateFilter, searchQuery, sortBy]
   );
 
   // Auth Check
@@ -508,7 +510,7 @@ export default function AdminPortalPage() {
               rounded="full"
               direction="down"
               prefix="Priority:"
-              className="w-full md:w-40"
+              className="w-full md:w-36"
               value={priorityFilter}
               onChange={(val) => setPriorityFilter(val)}
               options={[
@@ -521,8 +523,24 @@ export default function AdminPortalPage() {
               size="sm"
               rounded="full"
               direction="down"
+              prefix="Date:"
+              className="w-full md:w-40"
+              value={dateFilter}
+              onChange={(val) => setDateFilter(val)}
+              options={[
+                { value: "All", label: "All Dates" },
+                { value: "today", label: "Today" },
+                { value: "7d", label: "Last 7 Days" },
+                { value: "30d", label: "Last 30 Days" },
+              ]}
+            />
+
+            <CustomSelect
+              size="sm"
+              rounded="full"
+              direction="down"
               prefix="Sort:"
-              className="w-full md:w-48"
+              className="w-full md:w-44"
               value={sortBy}
               onChange={(val) => setSortBy(val)}
               options={[

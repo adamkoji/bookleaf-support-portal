@@ -148,6 +148,7 @@ export async function fetchAdminTickets(filters = {}) {
   if (filters.status && filters.status !== "All") params.set("status", filters.status);
   if (filters.category && filters.category !== "All") params.set("category", filters.category);
   if (filters.priority && filters.priority !== "All") params.set("priority", filters.priority);
+  if (filters.date && filters.date !== "All") params.set("date", filters.date);
   if (filters.search && filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.sort_by) params.set("sort_by", filters.sort_by);
 

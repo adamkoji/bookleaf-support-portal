@@ -508,8 +508,8 @@ export default function AuthorPortalPage() {
                           </span>
                         </div>
 
-                        {/* 4 Key Numbers */}
-                        <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-2xl bg-[#FFF5F6]/70 group-hover:bg-[#FFF5F6] border border-[#F8E2E4] transition-colors duration-300 p-4 text-xs">
+                        {/* 5 Key Financial & Sales Numbers (MRP, Copies Sold, Royalty Earned, Royalty Paid, Pending Payout) */}
+                        <div className="mt-6 grid grid-cols-2 sm:grid-cols-5 gap-3 rounded-2xl bg-[#FFF5F6]/70 group-hover:bg-[#FFF5F6] border border-[#F8E2E4] transition-colors duration-300 p-4 text-xs">
                           <div>
                             <span className="text-neutral-500 block">MRP</span>
                             <span className="font-bold text-[#222222] text-sm mt-0.5 block">
@@ -543,7 +543,16 @@ export default function AuthorPortalPage() {
 
                           <div>
                             <span className="text-neutral-500 block">
-                              Pending Payout
+                              Royalty Paid
+                            </span>
+                            <span className="font-bold text-[#3898A6] text-sm mt-0.5 block">
+                              {formatINR(book.royalty_paid)}
+                            </span>
+                          </div>
+
+                          <div className="col-span-2 sm:col-span-1">
+                            <span className="text-neutral-500 block">
+                              Royalty Pending
                             </span>
                             <span className="font-bold text-[#EC6568] text-sm mt-0.5 block">
                               {formatINR(book.royalty_pending)}
